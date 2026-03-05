@@ -110,7 +110,7 @@ export default function LogposeTodo() {
     <div className="min-h-screen bg-gray-50 text-gray-900 p-6 font-sans">
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-extrabold tracking-tight">Logpose Todo 🧭</h1>
+          <h1 className="text-3xl font-extrabold tracking-tight">Logpose Todo</h1>
           <p className="text-gray-500 mt-2">Zero-friction. High ROI tasks only.</p>
         </div>
 
