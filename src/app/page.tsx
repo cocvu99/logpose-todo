@@ -2,13 +2,22 @@
 
 import { useState, useEffect } from 'react';
 
-type BoardColumn = 'yesterday' | 'today' | 'tomorrow';
+// Priority Mapping: Ánh xạ Label sang Trọng số (Score)
+const PRIORITY_MAP = {
+  'Blocker': 5,
+  'Critical': 4,
+  'High': 3,
+  'Medium': 2,
+  'Low': 1
+} as const;
+
+type PriorityLevel = keyof typeof PRIORITY_MAP;
 
 interface Task {
   id: string;
   title: string;
-  column: BoardColumn;
-  impact: number;
+  date: string; // Format: YYYY-MM-DD
+  priority: PriorityLevel;
   effort: number;
   completed: boolean;
 }
@@ -16,19 +25,32 @@ interface Task {
 export default function LogposeTodo() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [title, setTitle] = useState('');
-  const [impact, setImpact] = useState(5);
+  const [priority, setPriority] = useState<PriorityLevel>('Medium');
   const [effort, setEffort] = useState(2);
-  const [column, setColumn] = useState<BoardColumn>('today');
+  
+  // Lấy ngày hôm nay làm chuẩn (Local Time)
+  const getLocalDateString = (offsetDays = 0) => {
+    const d = new Date();
+    d.setDate(d.getDate() + offsetDays);
+    return d.toLocaleDateString('en-CA'); // Trả về format YYYY-MM-DD an toàn
+  };
 
-  // Load data từ Local Storage khi khởi tạo
+  const [taskDate, setTaskDate] = useState(getLocalDateString(0));
+
+  // Dates cho 3 cột
+  const dateYesterday = getLocalDateString(-1);
+  const dateToday = getLocalDateString(0);
+  const dateTomorrow = getLocalDateString(1);
+
+  // Load data
   useEffect(() => {
-    const saved = localStorage.getItem('logpose-tasks');
+    const saved = localStorage.getItem('logpose-tasks-v2');
     if (saved) setTasks(JSON.parse(saved));
   }, []);
 
-  // Save data vào Local Storage mỗi khi tasks thay đổi
+  // Save data
   useEffect(() => {
-    localStorage.setItem('logpose-tasks', JSON.stringify(tasks));
+    localStorage.setItem('logpose-tasks-v2', JSON.stringify(tasks));
   }, [tasks]);
 
   const addTask = (e: React.FormEvent) => {
@@ -38,8 +60,8 @@ export default function LogposeTodo() {
     const newTask: Task = {
       id: crypto.randomUUID(),
       title,
-      column,
-      impact,
+      date: taskDate,
+      priority,
       effort,
       completed: false
     };
@@ -56,113 +78,146 @@ export default function LogposeTodo() {
     setTasks(tasks.filter(t => t.id !== id));
   };
 
-  // Thuật toán Core: Sắp xếp theo mức độ ưu tiên (Chưa hoàn thành lên trước -> Điểm ROI cao lên trước)
-  // ROI Score = Impact (Càng cao càng tốt) - Effort (Càng thấp càng tốt)
-  const getSortedTasks = (col: BoardColumn) => {
+  // Thuật toán Core: ROI = (Priority Score * 2) - Effort
+  const getSortedTasks = (targetDate: string) => {
     return tasks
-      .filter(t => t.column === col)
+      .filter(t => t.date === targetDate)
       .sort((a, b) => {
         if (a.completed !== b.completed) return a.completed ? 1 : -1;
-        const scoreA = a.impact * 2 - a.effort;
-        const scoreB = b.impact * 2 - b.effort;
+        const scoreA = PRIORITY_MAP[a.priority] * 2 - a.effort;
+        const scoreB = PRIORITY_MAP[b.priority] * 2 - b.effort;
         return scoreB - scoreA;
       });
   };
 
-  const ColumnUI = ({ title, colType }: { title: string, colType: BoardColumn }) => (
-    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex-1">
-      <h2 className="text-xl font-bold mb-4 text-center border-b pb-2 capitalize">{title}</h2>
-      <div className="space-y-3">
-        {getSortedTasks(colType).map(task => (
+  // Helper format ngày hiển thị trên cột (DD/MM/YYYY)
+  const formatDisplayDate = (dateStr: string) => {
+    const [y, m, d] = dateStr.split('-');
+    return `${d}/${m}/${y}`;
+  };
+
+  const getPriorityColor = (p: PriorityLevel) => {
+    switch(p) {
+      case 'Blocker': return 'text-red-700 bg-red-100';
+      case 'Critical': return 'text-orange-700 bg-orange-100';
+      case 'High': return 'text-yellow-700 bg-yellow-100';
+      case 'Medium': return 'text-blue-700 bg-blue-100';
+      case 'Low': return 'text-gray-700 bg-gray-200';
+    }
+  };
+
+  const ColumnUI = ({ title, targetDate }: { title: string, targetDate: string }) => (
+    <div className="bg-white p-4 rounded-sm shadow-sm border border-stone-200 flex-1">
+      <div className="text-center border-b border-stone-100 pb-3 mb-4">
+        <h2 className="text-lg font-bold text-stone-800">{title}</h2>
+        <p className="text-xs text-stone-500 font-mono mt-1">{formatDisplayDate(targetDate)}</p>
+      </div>
+      <div className="space-y-2">
+        {getSortedTasks(targetDate).map(task => (
           <div 
             key={task.id} 
-            className={`p-3 rounded-lg border ${task.completed ? 'bg-gray-50 opacity-60' : 'bg-blue-50/50 border-blue-100'}`}
+            className={`p-3 rounded-sm border ${task.completed ? 'bg-stone-50 border-stone-100 opacity-60' : 'bg-white border-stone-200 hover:border-stone-300'}`}
           >
             <div className="flex items-start justify-between gap-2">
-              <div className="flex items-start gap-2 flex-1">
+              <div className="flex items-start gap-3 flex-1">
                 <input 
                   type="checkbox" 
                   checked={task.completed}
                   onChange={() => toggleTask(task.id)}
-                  className="mt-1 w-4 h-4 cursor-pointer"
+                  className="mt-1 w-4 h-4 cursor-pointer accent-stone-800"
                 />
                 <div>
-                  <p className={`font-medium ${task.completed ? 'line-through text-gray-500' : 'text-gray-800'}`}>
+                  <p className={`text-sm font-medium ${task.completed ? 'line-through text-stone-400' : 'text-stone-800'}`}>
                     {task.title}
                   </p>
-                  <div className="flex gap-2 mt-1 text-xs">
-                    <span className="text-green-600 font-semibold bg-green-100 px-1.5 rounded">Impact: {task.impact}</span>
-                    <span className="text-orange-600 font-semibold bg-orange-100 px-1.5 rounded">Effort: {task.effort}</span>
+                  <div className="flex gap-2 mt-2 text-[10px] font-mono">
+                    <span className={`px-1.5 py-0.5 rounded-sm ${getPriorityColor(task.priority)}`}>
+                      {task.priority}
+                    </span>
+                    <span className="text-stone-500 bg-stone-100 px-1.5 py-0.5 rounded-sm">
+                      Effort: {task.effort}
+                    </span>
                   </div>
                 </div>
               </div>
-              <button onClick={() => deleteTask(task.id)} className="text-red-400 hover:text-red-600 text-sm">
+              <button onClick={() => deleteTask(task.id)} className="text-stone-300 hover:text-red-500 text-sm">
                 ✕
               </button>
             </div>
           </div>
         ))}
+        {getSortedTasks(targetDate).length === 0 && (
+          <p className="text-center text-stone-400 text-sm italic py-4">No tasks</p>
+        )}
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 p-6 font-sans">
+    <div className="min-h-screen bg-[#F7F6F3] text-stone-900 p-6 font-sans">
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-extrabold tracking-tight">Logpose Todo</h1>
-          <p className="text-gray-500 mt-2">Zero-friction. High ROI tasks only.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-stone-800">Logpose 🧭</h1>
+          <p className="text-stone-500 mt-1 text-sm">Zero-friction. High ROI tasks only.</p>
         </div>
 
-        {/* Form nhập liệu nhanh */}
-        <form onSubmit={addTask} className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-8 flex flex-wrap gap-4 items-end">
-          <div className="flex-1 min-w-[250px]">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Task / Habit (VD: Hít đất 50 cái)</label>
+        {/* Form nhập liệu */}
+        <form onSubmit={addTask} className="bg-white p-5 rounded-sm shadow-sm border border-stone-200 mb-8 flex flex-wrap gap-4 items-end">
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Task Info</label>
             <input 
               type="text" 
               value={title} 
               onChange={e => setTitle(e.target.value)} 
-              className="w-full border border-gray-300 rounded-md p-2 focus:ring-2 focus:ring-blue-500 outline-none"
-              placeholder="Bạn cần hoàn thành việc gì?"
+              className="w-full border border-stone-300 rounded-sm p-2 text-sm focus:border-stone-500 focus:ring-0 outline-none transition-colors"
+              placeholder="Ex: Hít đất 50 cái..."
               autoFocus
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Cột thời gian</label>
-            <select value={column} onChange={e => setColumn(e.target.value as BoardColumn)} className="border border-gray-300 rounded-md p-2 outline-none">
-              <option value="yesterday">Hôm qua</option>
-              <option value="today">Hôm nay</option>
-              <option value="tomorrow">Ngày mai</option>
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Date</label>
+            <input 
+              type="date" 
+              value={taskDate} 
+              onChange={e => setTaskDate(e.target.value)} 
+              className="border border-stone-300 rounded-sm p-2 text-sm outline-none cursor-pointer"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Priority</label>
+            <select value={priority} onChange={e => setPriority(e.target.value as PriorityLevel)} className="border border-stone-300 rounded-sm p-2 text-sm outline-none cursor-pointer">
+              {Object.keys(PRIORITY_MAP).map(p => (
+                <option key={p} value={p}>{p}</option>
+              ))}
             </select>
           </div>
 
-          <div className="w-20">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Impact</label>
-            <input type="number" min="1" max="10" value={impact} onChange={e => setImpact(Number(e.target.value))} className="w-full border border-gray-300 rounded-md p-2 outline-none" />
+          <div className="w-16">
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Effort</label>
+            <input type="number" min="1" max="10" value={effort} onChange={e => setEffort(Number(e.target.value))} className="w-full border border-stone-300 rounded-sm p-2 text-sm outline-none" />
           </div>
 
-          <div className="w-20">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Effort</label>
-            <input type="number" min="1" max="10" value={effort} onChange={e => setEffort(Number(e.target.value))} className="w-full border border-gray-300 rounded-md p-2 outline-none" />
-          </div>
-
-          <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-md transition-colors">
-            Add Task
+          <button type="submit" className="bg-stone-800 hover:bg-stone-900 text-white text-sm font-semibold py-2 px-5 rounded-sm transition-colors h-[38px]">
+            Add
           </button>
         </form>
 
         {/* Giao diện 3 cột */}
-        <div className="flex flex-col md:flex-row gap-6">
-          <ColumnUI title="Hôm qua" colType="yesterday" />
-          <div className="md:transform md:-translate-y-4 flex-1">
-            {/* Cột Today được highlight nổi bật hơn */}
-            <div className="shadow-lg border-blue-200 rounded-xl overflow-hidden">
-               <div className="bg-blue-600 text-white text-center py-2 font-bold text-sm tracking-widest">FOCUS ZONE</div>
-               <ColumnUI title="Hôm nay" colType="today" />
+        <div className="flex flex-col md:flex-row gap-5">
+          <ColumnUI title="Hôm qua" targetDate={dateYesterday} />
+          
+          <div className="flex-1 transform md:-translate-y-2">
+            <div className="border-2 border-stone-400 rounded-sm relative">
+               <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-stone-400 text-white text-[10px] font-bold px-2 py-0.5 rounded-sm uppercase tracking-widest">
+                 Focus
+               </div>
+               <ColumnUI title="Hôm nay" targetDate={dateToday} />
             </div>
           </div>
-          <ColumnUI title="Ngày mai" colType="tomorrow" />
+
+          <ColumnUI title="Ngày mai" targetDate={dateTomorrow} />
         </div>
       </div>
     </div>
