@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 
-// Priority Mapping: Ánh xạ Label sang Trọng số (Score)
 const PRIORITY_MAP = {
   'Blocker': 5,
   'Critical': 4,
@@ -16,7 +16,7 @@ type PriorityLevel = keyof typeof PRIORITY_MAP;
 interface Task {
   id: string;
   title: string;
-  date: string; // Format: YYYY-MM-DD
+  date: string;
   priority: PriorityLevel;
   effort: number;
   completed: boolean;
@@ -27,38 +27,45 @@ export default function LogposeTodo() {
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<PriorityLevel>('Medium');
   const [effort, setEffort] = useState(2);
+  const [isLoading, setIsLoading] = useState(true);
   
-  // Lấy ngày hôm nay làm chuẩn (Local Time)
   const getLocalDateString = (offsetDays = 0) => {
     const d = new Date();
     d.setDate(d.getDate() + offsetDays);
-    return d.toLocaleDateString('en-CA'); // Trả về format YYYY-MM-DD an toàn
+    return d.toLocaleDateString('en-CA'); 
   };
 
   const [taskDate, setTaskDate] = useState(getLocalDateString(0));
 
-  // Dates cho 3 cột
   const dateYesterday = getLocalDateString(-1);
   const dateToday = getLocalDateString(0);
   const dateTomorrow = getLocalDateString(1);
 
-  // Load data
+  // Fetch dữ liệu từ Supabase khi load trang
   useEffect(() => {
-    const saved = localStorage.getItem('logpose-tasks-v2');
-    if (saved) setTasks(JSON.parse(saved));
+    fetchTasks();
   }, []);
 
-  // Save data
-  useEffect(() => {
-    localStorage.setItem('logpose-tasks-v2', JSON.stringify(tasks));
-  }, [tasks]);
+  const fetchTasks = async () => {
+    setIsLoading(true);
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .order('created_at', { ascending: true });
 
-  const addTask = (e: React.FormEvent) => {
+    if (error) {
+      console.error('Lỗi khi tải dữ liệu:', error);
+    } else {
+      setTasks(data || []);
+    }
+    setIsLoading(false);
+  };
+
+  const addTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
     
-    const newTask: Task = {
-      id: crypto.randomUUID(),
+    const newTask = {
       title,
       date: taskDate,
       priority,
@@ -66,19 +73,55 @@ export default function LogposeTodo() {
       completed: false
     };
     
-    setTasks([...tasks, newTask]);
-    setTitle('');
+    // Gọi API Insert xuống Supabase
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert([newTask])
+      .select();
+
+    if (error) {
+      console.error('Lỗi khi thêm task:', error);
+    } else if (data) {
+      setTasks([...tasks, data[0]]);
+      setTitle('');
+    }
   };
 
-  const toggleTask = (id: string) => {
-    setTasks(tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
+  const toggleTask = async (id: string, currentStatus: boolean) => {
+    const newStatus = !currentStatus;
+    
+    // Cập nhật UI ngay lập tức để tạo cảm giác mượt mà (Optimistic Update)
+    setTasks(tasks.map(t => t.id === id ? { ...t, completed: newStatus } : t));
+
+    // Gọi API Update xuống Supabase
+    const { error } = await supabase
+      .from('tasks')
+      .update({ completed: newStatus })
+      .eq('id', id);
+
+    if (error) {
+      console.error('Lỗi khi cập nhật trạng thái:', error);
+      // Nếu lỗi, rollback lại trạng thái cũ
+      setTasks(tasks.map(t => t.id === id ? { ...t, completed: currentStatus } : t));
+    }
   };
 
-  const deleteTask = (id: string) => {
+  const deleteTask = async (id: string) => {
+    // Cập nhật UI
     setTasks(tasks.filter(t => t.id !== id));
+
+    // Gọi API Delete
+    const { error } = await supabase
+      .from('tasks')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Lỗi khi xóa task:', error);
+      // Có thể fetch lại data nếu cần đảm bảo tính đồng bộ tuyệt đối
+    }
   };
 
-  // Thuật toán Core: ROI = (Priority Score * 2) - Effort
   const getSortedTasks = (targetDate: string) => {
     return tasks
       .filter(t => t.date === targetDate)
@@ -90,7 +133,6 @@ export default function LogposeTodo() {
       });
   };
 
-  // Helper format ngày hiển thị trên cột (DD/MM/YYYY)
   const formatDisplayDate = (dateStr: string) => {
     const [y, m, d] = dateStr.split('-');
     return `${d}/${m}/${y}`;
@@ -103,6 +145,7 @@ export default function LogposeTodo() {
       case 'High': return 'text-yellow-700 bg-yellow-100';
       case 'Medium': return 'text-blue-700 bg-blue-100';
       case 'Low': return 'text-gray-700 bg-gray-200';
+      default: return 'text-gray-700 bg-gray-200';
     }
   };
 
@@ -113,41 +156,47 @@ export default function LogposeTodo() {
         <p className="text-xs text-stone-500 font-mono mt-1">{formatDisplayDate(targetDate)}</p>
       </div>
       <div className="space-y-2">
-        {getSortedTasks(targetDate).map(task => (
-          <div 
-            key={task.id} 
-            className={`p-3 rounded-sm border ${task.completed ? 'bg-stone-50 border-stone-100 opacity-60' : 'bg-white border-stone-200 hover:border-stone-300'}`}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-start gap-3 flex-1">
-                <input 
-                  type="checkbox" 
-                  checked={task.completed}
-                  onChange={() => toggleTask(task.id)}
-                  className="mt-1 w-4 h-4 cursor-pointer accent-stone-800"
-                />
-                <div>
-                  <p className={`text-sm font-medium ${task.completed ? 'line-through text-stone-400' : 'text-stone-800'}`}>
-                    {task.title}
-                  </p>
-                  <div className="flex gap-2 mt-2 text-[10px] font-mono">
-                    <span className={`px-1.5 py-0.5 rounded-sm ${getPriorityColor(task.priority)}`}>
-                      {task.priority}
-                    </span>
-                    <span className="text-stone-500 bg-stone-100 px-1.5 py-0.5 rounded-sm">
-                      Effort: {task.effort}
-                    </span>
+        {isLoading ? (
+           <p className="text-center text-stone-400 text-sm py-4">Loading...</p>
+        ) : (
+          <>
+            {getSortedTasks(targetDate).map(task => (
+              <div 
+                key={task.id} 
+                className={`p-3 rounded-sm border ${task.completed ? 'bg-stone-50 border-stone-100 opacity-60' : 'bg-white border-stone-200 hover:border-stone-300'}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-3 flex-1">
+                    <input 
+                      type="checkbox" 
+                      checked={task.completed}
+                      onChange={() => toggleTask(task.id, task.completed)}
+                      className="mt-1 w-4 h-4 cursor-pointer accent-stone-800"
+                    />
+                    <div>
+                      <p className={`text-sm font-medium ${task.completed ? 'line-through text-stone-400' : 'text-stone-800'}`}>
+                        {task.title}
+                      </p>
+                      <div className="flex gap-2 mt-2 text-[10px] font-mono">
+                        <span className={`px-1.5 py-0.5 rounded-sm ${getPriorityColor(task.priority)}`}>
+                          {task.priority}
+                        </span>
+                        <span className="text-stone-500 bg-stone-100 px-1.5 py-0.5 rounded-sm">
+                          Effort: {task.effort}
+                        </span>
+                      </div>
+                    </div>
                   </div>
+                  <button onClick={() => deleteTask(task.id)} className="text-stone-300 hover:text-red-500 text-sm">
+                    ✕
+                  </button>
                 </div>
               </div>
-              <button onClick={() => deleteTask(task.id)} className="text-stone-300 hover:text-red-500 text-sm">
-                ✕
-              </button>
-            </div>
-          </div>
-        ))}
-        {getSortedTasks(targetDate).length === 0 && (
-          <p className="text-center text-stone-400 text-sm italic py-4">No tasks</p>
+            ))}
+            {getSortedTasks(targetDate).length === 0 && (
+              <p className="text-center text-stone-400 text-sm italic py-4">No tasks</p>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -157,11 +206,9 @@ export default function LogposeTodo() {
     <div className="min-h-screen bg-[#F7F6F3] text-stone-900 p-6 font-sans">
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold tracking-tight text-stone-800">Logpose 🧭</h1>
-          <p className="text-stone-500 mt-1 text-sm">Zero-friction. High ROI tasks only.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-stone-800 uppercase">Logpose</h1>
         </div>
 
-        {/* Form nhập liệu */}
         <form onSubmit={addTask} className="bg-white p-5 rounded-sm shadow-sm border border-stone-200 mb-8 flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[200px]">
             <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Task Info</label>
@@ -170,7 +217,7 @@ export default function LogposeTodo() {
               value={title} 
               onChange={e => setTitle(e.target.value)} 
               className="w-full border border-stone-300 rounded-sm p-2 text-sm focus:border-stone-500 focus:ring-0 outline-none transition-colors"
-              placeholder="Ex: Hít đất 50 cái..."
+              placeholder="Ex: Refactor Database Module..."
               autoFocus
             />
           </div>
@@ -204,7 +251,6 @@ export default function LogposeTodo() {
           </button>
         </form>
 
-        {/* Giao diện 3 cột */}
         <div className="flex flex-col md:flex-row gap-5">
           <ColumnUI title="Hôm qua" targetDate={dateYesterday} />
           
